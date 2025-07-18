@@ -10,6 +10,15 @@ from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 import secrets
+import google.generativeai as genai  # Keep old import for compatibility
+# Import new SDK
+try:
+    from google import genai as new_genai
+    from google.genai import types
+    NEW_SDK_AVAILABLE = True
+except ImportError:
+    NEW_SDK_AVAILABLE = False
+    print("New Google Gen AI SDK not available, install with: pip install google-genai")
 
 # Load environment variables
 load_dotenv()
@@ -20,6 +29,7 @@ app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
 # Configuration
 class Config:
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+    GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
     UPLOAD_FOLDER = 'uploads'
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
 
@@ -39,6 +49,32 @@ def get_openai_client():
         return client
     except Exception as e:
         raise ValueError(f"Failed to initialize OpenAI client: {str(e)}")
+
+# Image size configurations for social media
+IMAGE_SIZES = {
+    "square": {"width": 1024, "height": 1024, "label": "Square (1:1) - Instagram Post"},
+    "portrait": {"width": 1024, "height": 1792, "label": "Portrait (9:16) - Instagram Story/TikTok"},
+    "landscape": {"width": 1792, "height": 1024, "label": "Landscape (16:9) - YouTube/Facebook"},
+    "twitter_post": {"width": 1200, "height": 675, "label": "Twitter Post (16:9)"},
+    "facebook_cover": {"width": 1200, "height": 630, "label": "Facebook Cover"},
+    "linkedin_post": {"width": 1200, "height": 627, "label": "LinkedIn Post"}
+}
+
+# Model configurations - Remove Gemini due to quality issues
+MODELS = {
+    "gpt-image-1": {
+        "name": "GPT Image 1",
+        "provider": "openai",
+        "supports_sizes": ["square"],  # GPT Image 1 only supports 1024x1024
+        "max_prompt_length": 1000
+    },
+    "dall-e-3": {
+        "name": "DALL-E 3",
+        "provider": "openai", 
+        "supports_sizes": ["square", "portrait", "landscape", "twitter_post", "facebook_cover", "linkedin_post"],
+        "max_prompt_length": 4000
+    }
+}
 
 # Load configuration files
 def load_json_config(filename, default_data):
@@ -153,22 +189,34 @@ def add_watermark(image_bytes, logo_bytes=None):
         print(f"Error adding watermark: {e}")
         return image_bytes
 
-def generate_image(prompt, model="gpt-image-1", size="1024x1024", add_logo=False, logo_bytes=None):
-    """Generate an image using OpenAI API"""
+def generate_with_openai(prompt, model, size_config):
+    """Generate image using OpenAI models - based on working version"""
     try:
         client = get_openai_client()
+        
+        # Convert size config to OpenAI format
+        if model == "dall-e-3":
+            # DALL-E 3 supports specific size strings
+            if size_config["width"] == size_config["height"]:
+                size_str = "1024x1024"
+            elif size_config["width"] < size_config["height"]:
+                size_str = "1024x1792"
+            else:
+                size_str = "1792x1024"
+        else:  # gpt-image-1
+            size_str = "1024x1024"  # Only supported size
         
         response = client.images.generate(
             model=model,
             prompt=prompt,
             n=1,
-            size=size
+            size=size_str
         )
         
-        # Handle base64 response (gpt-image-1)
+        # Handle base64 response (gpt-image-1) - same as working version
         if hasattr(response, 'data') and response.data and hasattr(response.data[0], 'b64_json') and response.data[0].b64_json:
             image_bytes = base64.b64decode(response.data[0].b64_json)
-        # Handle URL response (dall-e-3)
+        # Handle URL response (dall-e-3) - same as working version
         elif hasattr(response, 'data') and response.data and hasattr(response.data[0], 'url') and response.data[0].url:
             image_response = requests.get(response.data[0].url)
             if image_response.status_code == 200:
@@ -177,6 +225,118 @@ def generate_image(prompt, model="gpt-image-1", size="1024x1024", add_logo=False
                 return None
         else:
             return None
+        
+        # Resize if needed (for custom social media sizes)
+        if size_config["width"] != 1024 or size_config["height"] != 1024:
+            img = Image.open(io.BytesIO(image_bytes))
+            img = img.resize((size_config["width"], size_config["height"]), Image.Resampling.LANCZOS)
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            image_bytes = buffer.getvalue()
+        
+        return image_bytes
+        
+    except Exception as e:
+        print(f"Error generating with OpenAI: {e}")
+        return None
+
+def generate_with_gemini(prompt, size_config):
+    """Generate image using free Gemini 2.0 Flash model (no billing required)"""
+    try:
+        # Check if new SDK is available
+        if not NEW_SDK_AVAILABLE:
+            print("New Google Gen AI SDK not available. Install with: pip install google-genai")
+            return None
+            
+        # Configure Gemini with new SDK
+        if not app.config['GEMINI_API_KEY']:
+            print("GEMINI_API_KEY not found")
+            return None
+        
+        width, height = size_config['width'], size_config['height']
+        print(f"Gemini generating image: {width}x{height} for prompt: {prompt[:50]}...")
+        
+        # Use the new Google Gen AI SDK with FREE Gemini model
+        client = new_genai.Client(api_key=app.config['GEMINI_API_KEY'])
+        
+        # Generate image using FREE Gemini 2.0 Flash Preview Image Generation
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-preview-image-generation",  # FREE model
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=['TEXT', 'IMAGE']
+            )
+        )
+        
+        print("Gemini API call completed")
+        
+        # Extract image from response
+        for part in response.candidates[0].content.parts:
+            if part.text is not None:
+                print(f"Gemini text response: {part.text[:100]}...")
+            elif part.inline_data is not None:
+                print(f"Found image data, mime_type: {part.inline_data.mime_type}")
+                
+                # Convert to PIL Image for resizing
+                from PIL import Image
+                img = Image.open(io.BytesIO(part.inline_data.data))
+                print(f"Gemini generated image size: {img.size}")
+                
+                # Resize to exact dimensions if needed
+                if img.size != (width, height):
+                    img = img.resize((width, height), Image.Resampling.LANCZOS)
+                    print(f"Resized to: {width}x{height}")
+                
+                # Convert back to bytes
+                buffer = io.BytesIO()
+                img.save(buffer, format="PNG")
+                return buffer.getvalue()
+        
+        print("No image found in Gemini response")
+        return None
+        
+    except Exception as e:
+        print(f"Error generating with Gemini: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def generate_image(prompt, model="gpt-image-1", size_key="square", add_logo=False, logo_bytes=None):
+    """Generate an image using the specified model and size - no fallbacks"""
+    try:
+        # Get model and size configurations
+        if model not in MODELS:
+            print(f"Unsupported model: {model}")
+            return None
+        
+        if size_key not in IMAGE_SIZES:
+            print(f"Unsupported size: {size_key}")
+            return None
+        
+        model_config = MODELS[model]
+        size_config = IMAGE_SIZES[size_key]
+        
+        print(f"Generating with model: {model}, size: {size_key} ({size_config['width']}x{size_config['height']})")
+        
+        # Generate image based on provider - NO FALLBACKS
+        image_bytes = None
+        
+        if model_config["provider"] == "openai":
+            print("Using OpenAI provider")
+            image_bytes = generate_with_openai(prompt, model, size_config)
+        elif model_config["provider"] == "gemini":
+            print("Using Gemini provider")
+            image_bytes = generate_with_gemini(prompt, size_config)
+            # If Gemini fails, it fails - no fallback
+        else:
+            print(f"Unsupported provider: {model_config['provider']}")
+            return None
+        
+        if not image_bytes:
+            print(f"Failed to generate image with {model}")
+            return None
+        
+        print(f"Successfully generated image with {model}: {len(image_bytes)} bytes")
         
         # Apply watermark if requested
         if add_logo:
@@ -188,7 +348,7 @@ def generate_image(prompt, model="gpt-image-1", size="1024x1024", add_logo=False
         print(f"Error generating image: {e}")
         return None
 
-# Routes
+# Routes - based on working version
 @app.route('/')
 def index():
     return render_template('index.html', 
@@ -210,7 +370,6 @@ def boost_prompt_route():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Update to generate function to handle fixed size
 @app.route('/generate', methods=['POST'])
 def generate():
     try:
@@ -220,38 +379,41 @@ def generate():
         selected_style = data.get('style', 'No Style (User Prompt Only)')
         style_influence = int(data.get('style_influence', 30))
         model = data.get('model', 'gpt-image-1')
-        size = "1024x1024"  # Fixed size
+        size_key = data.get('size', 'square')  # Now accepts size key instead of fixed size
         add_logo = data.get('add_logo', False)
         
         if not user_prompt:
             return jsonify({'error': 'No prompt provided'}), 400
         
-        # Build the full prompt
+        # Build the full prompt - same as working version
         full_prompt = build_prompt(user_prompt, selected_style, style_influence)
         
-        # Generate image
+        # Generate image with new multi-model support
         image_bytes = generate_image(
             prompt=full_prompt,
             model=model,
-            size=size,
+            size_key=size_key,
             add_logo=add_logo,
             logo_bytes=None
         )
         
         if image_bytes:
-            # Convert to base64 for JSON response
+            # Convert to base64 for JSON response - same as working version
             image_b64 = base64.b64encode(image_bytes).decode('utf-8')
             
-            # Generate filename
+            # Generate filename with model and size info
             prompt_slug = "".join(c if c.isalnum() else "_" for c in user_prompt[:30].lower())
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{prompt_slug}_{timestamp}.png"
+            size_config = IMAGE_SIZES[size_key]
+            filename = f"{prompt_slug}_{model}_{size_config['width']}x{size_config['height']}_{timestamp}.png"
             
             return jsonify({
                 'success': True,
                 'image': image_b64,
                 'filename': filename,
-                'prompt': full_prompt
+                'prompt': full_prompt,
+                'model': model,
+                'size': f"{size_config['width']}x{size_config['height']}"
             })
         else:
             return jsonify({'error': 'Failed to generate image'}), 500
