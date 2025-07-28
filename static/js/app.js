@@ -4,7 +4,7 @@ const MODELS = {
         "name": "GPT Image 1",
         "provider": "openai",
         "supports_sizes": ["square"],
-        "max_prompt_length": 1000,
+        "max_prompt_length": 3000,
         "description": "Fast and efficient model, square images only"
     },
     "dall-e-3": {
