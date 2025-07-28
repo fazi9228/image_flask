@@ -131,17 +131,185 @@ def build_prompt(user_prompt, selected_style, style_influence):
     else:
         return f"Create an image in this exact style: {style_guide}. The image should include: {user_prompt}"
 
-def boost_prompt(original_prompt):
-    """Enhance the user's prompt with GPT-4o"""
+def boost_prompt(original_prompt, model=None, size_key=None, selected_style=None, style_influence=None):
+    """Enhanced prompt boosting that's aware of the target model, size, and visual style"""
     try:
         client = get_openai_client()
+        
+        # Get model and size information
+        model_config = MODELS.get(model, {})
+        size_config = IMAGE_SIZES.get(size_key, {})
+        
+        # Get style information
+        style_guide = style_guides.get(selected_style, "") if selected_style else ""
+        style_influence_level = int(style_influence) if style_influence else 0
+        
+        # Create model-specific and size-specific enhancement instructions
+        enhancement_instructions = []
+        
+        # Base instruction
+        enhancement_instructions.append(
+            "You are a creative prompt enhancer for AI image generation. "
+            "Your job is to take a basic image prompt and enhance it with more descriptive language, "
+            "interesting details, and artistic elements while preserving the original intent."
+        )
+        
+        # Style-specific enhancements
+        if selected_style and selected_style != "No Style (User Prompt Only)" and style_influence_level > 0:
+            if "blue luxe realism" in selected_style.lower():
+                # Blue Luxe Realism theme (using existing style guide)
+                if model == "gpt-image-1":
+                    enhancement_instructions.append(
+                        f"STYLE: Apply Blue Luxe Realism theme (influence: {style_influence_level}%). "
+                        f"Style guide: {style_guide}. "
+                        "For GPT Image 1: Focus on sharp rendering of metallics, precise color accuracy for royal blues and deep golds, "
+                        "crisp white backgrounds, high-resolution editorial quality with ultra-sharp text rendering."
+                    )
+                else:  # DALL-E 3
+                    enhancement_instructions.append(
+                        f"STYLE: Apply Blue Luxe Realism theme (influence: {style_influence_level}%). "
+                        f"Style guide: {style_guide}. "
+                        "For DALL-E 3: Emphasize cinematic 50mm lens quality, soft daylight lighting, "
+                        "photorealistic metallics, rich editorial atmosphere."
+                    )
+            elif "70s retro cinematic" in selected_style.lower():
+                if model == "gpt-image-1":
+                    enhancement_instructions.append(
+                        f"STYLE: Apply 70s Retro Cinematic style (influence: {style_influence_level}%). "
+                        f"Style guide: {style_guide}. "
+                        "Focus on precise retro typography and sharp vintage aesthetics."
+                    )
+                else:  # DALL-E 3
+                    enhancement_instructions.append(
+                        f"STYLE: Apply 70s Retro Cinematic style (influence: {style_influence_level}%). "
+                        f"Style guide: {style_guide}. "
+                        "Emphasize artistic vintage cinematography and nostalgic atmosphere."
+                    )
+            elif "bright studio pop" in selected_style.lower():
+                if model == "gpt-image-1":
+                    enhancement_instructions.append(
+                        f"STYLE: Apply Bright Studio Pop style (influence: {style_influence_level}%). "
+                        f"Style guide: {style_guide}. "
+                        "Focus on sharp, crisp rendering and precise color accuracy."
+                    )
+                else:  # DALL-E 3
+                    enhancement_instructions.append(
+                        f"STYLE: Apply Bright Studio Pop style (influence: {style_influence_level}%). "
+                        f"Style guide: {style_guide}. "
+                        "Emphasize vibrant pop art aesthetic and artistic studio photography feel."
+                    )
+            else:
+                # Generic style application
+                enhancement_instructions.append(
+                    f"STYLE: Apply the visual style '{selected_style}' with {style_influence_level}% influence. "
+                    f"Style guide: {style_guide}"
+                )
+        
+        # Model-specific enhancements
+        if model == "gpt-image-1":
+            enhancement_instructions.append(
+                "IMPORTANT: This is for GPT Image 1 (GPT-4o), which excels at text rendering and context awareness. "
+                "Focus on adding specifications for sharp text, clear typography, professional layout, "
+                "and precise visual elements. Emphasize high resolution, crisp details, and exact positioning. "
+                "GPT-4o understands complex instructions, so be very specific about text placement, "
+                "color schemes using hex codes if needed, and professional design elements."
+            )
+        elif model == "dall-e-3":
+            enhancement_instructions.append(
+                "IMPORTANT: This is for DALL-E 3, which excels at artistic creativity and diverse styles. "
+                "Focus on artistic style descriptions, lighting, mood, composition, and creative visual elements. "
+                "DALL-E 3 responds well to artistic terms like 'cinematic lighting', 'photorealistic', "
+                "'hyperdetailed', and specific art styles. Emphasize creative and artistic aspects."
+            )
+        
+        # Size-specific enhancements
+        if size_config:
+            aspect_ratio = size_config["width"] / size_config["height"]
+            
+            if aspect_ratio == 1.0:  # Square
+                enhancement_instructions.append(
+                    f"Size specification: This will be a SQUARE image ({size_config['width']}x{size_config['height']}). "
+                    "Design for a 1:1 aspect ratio with centered composition. Ensure all elements fit within "
+                    "a square format with balanced spacing. Consider circular or radial layouts."
+                )
+            elif aspect_ratio < 1.0:  # Portrait
+                enhancement_instructions.append(
+                    f"Size specification: This will be a PORTRAIT image ({size_config['width']}x{size_config['height']}). "
+                    "Design for a vertical layout with top-to-bottom flow. Perfect for mobile viewing, "
+                    "social media stories, or tall infographics. Stack elements vertically."
+                )
+            else:  # Landscape
+                enhancement_instructions.append(
+                    f"Size specification: This will be a LANDSCAPE image ({size_config['width']}x{size_config['height']}). "
+                    "Design for a horizontal layout with left-to-right flow. Perfect for presentations, "
+                    "desktop wallpapers, or wide comparison charts. Arrange elements side by side."
+                )
+        
+        # Combine all instructions
+        system_prompt = " ".join(enhancement_instructions)
+        
+        # Add specific prompt based on content type detection
+        content_type_instructions = []
+        prompt_lower = original_prompt.lower()
+        
+        if any(word in prompt_lower for word in ["comparison", "vs", "versus", "chart", "infographic"]):
+            if model == "gpt-image-1":
+                if "blue luxe realism" in selected_style.lower():
+                    content_type_instructions.append(
+                        "This appears to be a comparison/infographic with Blue Luxe theme. "
+                        "For GPT Image 1: Create premium financial comparison chart with sophisticated blue gradient backgrounds, "
+                        "gold accent borders, crystal-clear typography, professional section divisions, "
+                        "editorial luxury aesthetic, and ultra-sharp text rendering."
+                    )
+                else:
+                    content_type_instructions.append(
+                        "This appears to be a comparison/infographic. For GPT Image 1: "
+                        "Add specifications for clear section divisions, readable headers, "
+                        "consistent typography, proper alignment, professional color scheme, "
+                        "and ensure all text elements are crisp and legible."
+                    )
+            else:
+                if "blue luxe realism" in selected_style.lower():
+                    content_type_instructions.append(
+                        "This appears to be a comparison/infographic with Blue Luxe theme. "
+                        "For DALL-E 3: Create luxurious financial infographic with rich blue atmospheric lighting, "
+                        "premium materials, sophisticated editorial elegance, and artistic depth."
+                    )
+                else:
+                    content_type_instructions.append(
+                        "This appears to be a comparison/infographic. For DALL-E 3: "
+                        "Add artistic flair while maintaining readability, consider modern "
+                        "design trends, clean layouts, and visually appealing color combinations."
+                    )
+        
+        if any(word in prompt_lower for word in ["logo", "brand", "corporate"]):
+            if model == "gpt-image-1":
+                content_type_instructions.append(
+                    "This appears to be logo/brand related. For GPT Image 1: "
+                    "Focus on sharp vector-style graphics, precise geometry, "
+                    "clean lines, and professional branding elements."
+                )
+            else:
+                content_type_instructions.append(
+                    "This appears to be logo/brand related. For DALL-E 3: "
+                    "Add creative design elements, modern aesthetics, and artistic styling "
+                    "while maintaining professional appearance."
+                )
+        
+        # Final instruction
+        final_instruction = (
+            f"Enhance this image prompt for AI image generation: '{original_prompt}'\n\n"
+            f"Additional context: {' '.join(content_type_instructions)}\n\n"
+            "Keep the enhanced prompt under 400 words and make it detailed but focused."
+        )
+        
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a creative prompt enhancer for image generation. Your job is to take a basic image prompt and enhance it with more descriptive language, interesting details, and artistic elements. Keep the original intent but make it more vivid."},
-                {"role": "user", "content": f"Enhance this image prompt for AI image generation, adding rich details but preserving the core idea (keep it under 200 words): '{original_prompt}'"}
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": final_instruction}
             ],
-            max_tokens=300
+            max_tokens=500
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -360,11 +528,15 @@ def boost_prompt_route():
     try:
         data = request.get_json()
         prompt = data.get('prompt', '')
+        model = data.get('model', 'gpt-image-1')
+        size_key = data.get('size', 'square')
+        selected_style = data.get('style', 'No Style (User Prompt Only)')
+        style_influence = data.get('style_influence', 30)
         
         if not prompt:
             return jsonify({'error': 'No prompt provided'}), 400
         
-        boosted = boost_prompt(prompt)
+        boosted = boost_prompt(prompt, model, size_key, selected_style, style_influence)
         return jsonify({'boosted_prompt': boosted})
     
     except Exception as e:
