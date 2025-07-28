@@ -203,11 +203,25 @@ function updateModelInfo() {
     console.log('Updating model info for:', selectedModel);
     
     if (modelConfig) {
+        // Add enhancement info to model description
+        let enhancementInfo = '';
+        let tipInfo = '';
+        
+        if (selectedModel === 'gpt-image-1') {
+            enhancementInfo = '<br><small>💡 Prompt enhancement optimized for text rendering & precision</small>';
+            tipInfo = '<br><small>💬 <strong>Tip:</strong> Smaller instructions yield better results for GPT Image 1</small>';
+        } else if (selectedModel === 'dall-e-3') {
+            enhancementInfo = '<br><small>🎨 Prompt enhancement optimized for creativity & artistic style</small>';
+            tipInfo = '<br><small>💬 <strong>Tip:</strong> Detailed, creative prompts work best with DALL-E 3</small>';
+        }
+        
         elements.modelInfo.innerHTML = 
             '<div class="model-info-text">' +
             '<strong>' + modelConfig.name + '</strong><br>' +
             modelConfig.description + '<br>' +
             'Max prompt: ' + modelConfig.max_prompt_length + ' chars' +
+            enhancementInfo +
+            tipInfo +
             '</div>';
     }
 }
@@ -272,6 +286,19 @@ function handleBoostPrompt() {
         return;
     }
     
+    // Get current model, size, and style selection for smart enhancement
+    const currentModel = elements.modelSelect.value;
+    const currentSize = elements.imageSizeSelect.value;
+    const currentStyle = elements.styleSelect.value;
+    const currentStyleInfluence = elements.styleInfluence.value;
+    
+    console.log('Enhancing prompt for:', {
+        model: currentModel, 
+        size: currentSize,
+        style: currentStyle,
+        influence: currentStyleInfluence
+    });
+    
     const originalButtonText = elements.boostPromptBtn.innerHTML;
     elements.boostPromptBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enhancing...';
     elements.boostPromptBtn.disabled = true;
@@ -281,7 +308,13 @@ function handleBoostPrompt() {
         headers: {
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ prompt: prompt })
+        body: JSON.stringify({ 
+            prompt: prompt,
+            model: currentModel,
+            size: currentSize,
+            style: currentStyle,              // ← Send current style
+            style_influence: currentStyleInfluence  // ← Send style influence
+        })
     })
     .then(function(response) {
         console.log('Boost prompt response:', response);
@@ -294,7 +327,24 @@ function handleBoostPrompt() {
         console.log('Boost prompt data:', data);
         if (data.boosted_prompt) {
             elements.promptInput.value = data.boosted_prompt;
-            showToast('Prompt enhanced successfully', 'success');
+            
+            // Show different success messages based on model and style
+            let successMessage = 'Prompt enhanced successfully';
+            if (currentModel === 'gpt-image-1') {
+                successMessage += ' for GPT Image 1';
+            } else if (currentModel === 'dall-e-3') {
+                successMessage += ' for DALL-E 3';
+            }
+            
+            if (currentStyle !== "No Style (User Prompt Only)") {
+                if (currentStyle.toLowerCase().includes('blue luxe')) {
+                    successMessage += ' with Pepperstone Blue Luxe theme';
+                } else {
+                    successMessage += ` with ${currentStyle} style`;
+                }
+            }
+            
+            showToast(successMessage, 'success');
         } else {
             showToast('Error: ' + (data.error || 'Unknown error'), 'error');
         }
