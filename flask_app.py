@@ -66,7 +66,7 @@ MODELS = {
         "name": "GPT Image 1",
         "provider": "openai",
         "supports_sizes": ["square"],  # GPT Image 1 only supports 1024x1024
-        "max_prompt_length": 1000
+        "max_prompt_length": 3000
     },
     "dall-e-3": {
         "name": "DALL-E 3",
